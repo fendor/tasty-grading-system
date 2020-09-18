@@ -1,1 +1,8 @@
 packages: ./
+
+
+source-repository-package
+    type: git
+    location: https://github.com/fendor/tasty
+    tag: 96795203335a54d39e3587c890c2879a3c1a0150
+    subdir: core

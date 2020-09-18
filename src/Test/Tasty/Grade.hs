@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -9,11 +10,9 @@ module Test.Tasty.Grade where
 
 import Numeric (showFFloat)
 import Control.Applicative
-import Control.Arrow (first)
 import Control.Monad.IO.Class (liftIO)
-import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
-import Data.Monoid (Monoid(..), Endo(..), Sum(..))
+import Data.Monoid (Endo(..), Sum(..))
 import Data.Proxy (Proxy(..))
 import Data.Tagged (Tagged(..))
 import Data.Typeable (Typeable)
@@ -25,9 +24,9 @@ import System.FilePath (takeDirectory)
 
 import qualified Control.Concurrent.STM as STM
 import qualified Control.Monad.State as State
-import qualified Control.Monad.Reader as Reader
 import qualified Data.Functor.Compose as Functor
 import qualified Data.Aeson as Aeson
+import Data.Aeson ((.=))
 import qualified Data.IntMap as IntMap
 import qualified Test.Tasty as Tasty
 import qualified Test.Tasty.Providers as Tasty
@@ -42,18 +41,16 @@ data TestGroupProps = TestGroupProps
   deriving (Show, Eq, Ord)
 
 
-instance Tasty.IsOption TestGroupProps where
-  defaultValue = TestGroupProps
-    { pointsPerSuccess = 0
-    , pointsPerFailure = 0
-    , maxPointPerGroup = 0
-    }
+instance Tasty.IsOption (Maybe TestGroupProps) where
+  defaultValue = Nothing
   parseValue _ = Nothing
   optionName = Tagged "testgrouppoints"
   optionHelp = Tagged ""
 
 testGroupPoints :: Int -> Int -> Int -> Tasty.TestTree -> Tasty.TestTree
-testGroupPoints = undefined
+testGroupPoints plus minus upperBound tree = Tasty.PlusTestOptions (Just points `Tasty.setOption`) tree
+  where
+    points = TestGroupProps plus minus upperBound
 
 -- ----------------------------------------------------------------------------
 
@@ -97,8 +94,8 @@ instance Semigroup Summary where
   @--xml=junit.xml@ will run all the tests and generate @junit.xml@ as output.
 
 -}
-antXMLRunner :: Tasty.Ingredient
-antXMLRunner = Tasty.TestReporter optionDescription runner
+jsonRunner :: Tasty.Ingredient
+jsonRunner = Tasty.TestReporter optionDescription runner
  where
   optionDescription = [ Tasty.Option (Proxy :: Proxy (Maybe JsonPath)) ]
   runner options testTree = do
@@ -113,33 +110,34 @@ antXMLRunner = Tasty.TestReporter optionDescription runner
                 => Tasty.OptionSet
                 -> Tasty.TestName
                 -> t
-                -> Tasty.Traversal (Functor.Compose (Reader.ReaderT [String] (State.StateT IntMap.Key IO)) (Const Summary))
+                -> Tasty.Traversal (Functor.Compose (State.StateT IntMap.Key IO) (Const Summary))
         runTest _ testName _ = Tasty.Traversal $ Functor.Compose $ do
           i <- State.get
-          groupNames <- Reader.ask
 
           summary <- liftIO $ STM.atomically $ do
             status <- STM.readTVar $
               fromMaybe (error "Attempted to lookup test by index outside bounds") $
                 IntMap.lookup i statusMap
 
-            let testCaseAttributes time = Aeson.object
-                  [ ("name", Aeson.string testName)
-                  , ("time", Aeson.string $ showTime time)
-                  , ("classname", intercalate "." (reverse groupNames))
+            let testCaseAttributes time =
+                  [ "name" .= testName
+                  , "time" .= showTime time
                   ]
 
+                mkSummary :: Aeson.Value -> Summary
                 mkSummary contents =
                   mempty { jsonRenderer = Endo
                              (contents :)
                          }
 
-                mkSuccess time = (mkSummary (testCaseAttributes time)) { summarySuccesses = Sum 1 }
+                mkSuccess :: Tasty.Time -> Summary
+                mkSuccess time = (mkSummary (Aeson.object $ testCaseAttributes time)) { summarySuccesses = Sum 1 }
 
+                mkFailure :: Tasty.Time -> String -> Summary
                 mkFailure time reason =
-                  mkSummary ( testCaseAttributes time
-                            , Aeson.object [("failure", reason)]
-                            )
+                  mkSummary $ Aeson.object $
+                          testCaseAttributes time <>
+                          ["failure" .= reason ]
 
             case status of
               -- If the test is done, generate XML for it
@@ -160,15 +158,27 @@ antXMLRunner = Tasty.TestReporter optionDescription runner
 
           Const summary <$ State.modify (+ 1)
 
-        runGroup groupName children = Tasty.Traversal $ Functor.Compose $ do
-          Const soFar <- Reader.local (groupName :) $ Functor.getCompose $ Tasty.getTraversal children
-
+        runGroup ::
+          Tasty.OptionSet ->
+          Tasty.TestName ->
+          Tasty.Traversal (Functor.Compose (State.StateT IntMap.Key IO) (Const Summary)) ->
+          Tasty.Traversal (Functor.Compose (State.StateT IntMap.Key IO) (Const Summary))
+        runGroup opts groupName children = Tasty.Traversal $ Functor.Compose $ do
+          Const soFar <- Functor.getCompose $ Tasty.getTraversal children
           let grouped =
-                Aeson.object
-                  [ ("name", groupName)
-                  , ("tests", show . getSum . (summaryFailures `mappend` summaryErrors `mappend` summarySuccesses) $ soFar)
-                  , ("groups", appEndo (xmlRenderer soFar) [])
+                Aeson.object $
+                  [ "name" .= groupName
+                  , "tests" .= (getSum . (summaryFailures `mappend` summaryErrors `mappend` summarySuccesses) $ soFar)
+                  , "groups" .= appEndo (jsonRenderer soFar) []
                   ]
+                  <> case Tasty.lookupOption opts of
+                      Nothing -> []
+                      Just TestGroupProps {..} ->
+                        [ "points" .= pointsPerSuccess
+                        , "malus" .= pointsPerFailure
+                        , "maximum" .= maxPointPerGroup
+                        ]
+
 
           pure $ Const
             soFar { jsonRenderer = Endo (grouped :)
@@ -176,7 +186,7 @@ antXMLRunner = Tasty.TestReporter optionDescription runner
 
       in do
         (Const summary, tests) <-
-          flip State.runStateT 0 $ flip Reader.runReaderT [] $ Functor.getCompose $ Tasty.getTraversal $
+          flip State.runStateT 0 $ Functor.getCompose $ Tasty.getTraversal $
            Tasty.foldTestTree
              Tasty.trivialFold { Tasty.foldSingle = runTest, Tasty.foldGroup = runGroup }
              options
@@ -186,11 +196,11 @@ antXMLRunner = Tasty.TestReporter optionDescription runner
           createPathDirIfMissing path
           Aeson.encodeFile path $
             Aeson.object
-                [ ("errors", (show . getSum . summaryErrors $ summary))
-                , ("failures", (show . getSum . summaryFailures $ summary))
-                , ("tests", (show tests))
-                , ("time", (showTime elapsedTime))
-                , ("results", appEndo (xmlRenderer summary) [])
+                [ "errors".= (getSum . summaryErrors $ summary)
+                , "failures" .= (getSum . summaryFailures $ summary)
+                , "tests" .= tests
+                , "time" .= showTime elapsedTime
+                , "results" .= appEndo (jsonRenderer summary) []
                 ]
 
           return (getSum ((summaryFailures `mappend` summaryErrors) summary) == 0)
