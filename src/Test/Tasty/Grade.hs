@@ -8,7 +8,6 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Test.Tasty.Grade where
 
-import Numeric (showFFloat)
 import Control.Applicative
 import Control.Monad.IO.Class (liftIO)
 import Data.Maybe (fromMaybe)
@@ -103,8 +102,8 @@ jsonRunner = Tasty.TestReporter optionDescription runner
 
     return $ \statusMap ->
       let
-        timeDigits = 3
-        showTime time = showFFloat (Just timeDigits) time ""
+        timeToNs :: Tasty.Time -> Integer
+        timeToNs time = round $ time * 10 ** 9
 
         runTest :: (Tasty.IsTest t)
                 => Tasty.OptionSet
@@ -121,7 +120,7 @@ jsonRunner = Tasty.TestReporter optionDescription runner
 
             let testCaseAttributes time =
                   [ "name" .= testName
-                  , "time" .= showTime time
+                  , "time" .= timeToNs time
                   ]
 
                 mkSummary :: Aeson.Value -> Summary
@@ -148,7 +147,7 @@ jsonRunner = Tasty.TestReporter optionDescription runner
                       Just e  -> pure $ (mkFailure (Tasty.resultTime result) (show e)) { summaryErrors = Sum 1 }
                       Nothing -> pure $
                         if resultTimedOut result
-                          then (mkFailure (Tasty.resultTime result) "TimeOut") { summaryErrors = Sum 1 }
+                          then (mkFailure (Tasty.resultTime result) "Timeout") { summaryErrors = Sum 1 }
                           else (mkFailure (Tasty.resultTime result) (Tasty.resultDescription result))
                                { summaryFailures = Sum 1 }
 
@@ -175,7 +174,7 @@ jsonRunner = Tasty.TestReporter optionDescription runner
                       Nothing -> []
                       Just TestGroupProps {..} ->
                         [ "points" .= pointsPerSuccess
-                        , "malus" .= pointsPerFailure
+                        , "deductions" .= pointsPerFailure
                         , "maximum" .= maxPointPerGroup
                         ]
 
@@ -199,7 +198,7 @@ jsonRunner = Tasty.TestReporter optionDescription runner
                 [ "errors".= (getSum . summaryErrors $ summary)
                 , "failures" .= (getSum . summaryFailures $ summary)
                 , "tests" .= tests
-                , "time" .= showTime elapsedTime
+                , "time" .= timeToNs elapsedTime
                 , "results" .= appEndo (jsonRenderer summary) []
                 ]
 
