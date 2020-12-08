@@ -113,47 +113,51 @@ jsonRunner = Tasty.TestReporter optionDescription runner
         runTest _ testName _ = Tasty.Traversal $ Functor.Compose $ do
           i <- State.get
 
-          summary <- liftIO $ STM.atomically $ do
+          testResult <- liftIO $ STM.atomically $ do
             status <- STM.readTVar $
               fromMaybe (error "Attempted to lookup test by index outside bounds") $
                 IntMap.lookup i statusMap
 
-            let testCaseAttributes time =
-                  [ "name" .= testName
-                  , "time" .= timeToNs time
-                  ]
-
-                mkSummary :: Aeson.Value -> Summary
-                mkSummary contents =
-                  mempty { jsonRenderer = Endo
-                             (contents :)
-                         }
-
-                mkSuccess :: Tasty.Time -> Summary
-                mkSuccess time = (mkSummary (Aeson.object $ testCaseAttributes time)) { summarySuccesses = Sum 1 }
-
-                mkFailure :: Tasty.Time -> String -> Summary
-                mkFailure time reason =
-                  mkSummary $ Aeson.object $
-                          testCaseAttributes time <>
-                          ["failure" .= reason ]
-
             case status of
+              Tasty.Done result -> pure result
+              -- Otherwise the test has either not been started or is currently
+              -- executing
+              _ -> STM.retry
+
+          let testCaseAttributes time =
+                [ "name" .= testName
+                , "time" .= timeToNs time
+                ]
+
+              mkSummary :: Aeson.Value -> Summary
+              mkSummary contents =
+                mempty { jsonRenderer = Endo
+                            (contents :)
+                        }
+
+              mkSuccess :: Tasty.Time -> Summary
+              mkSuccess time = (mkSummary (Aeson.object $ testCaseAttributes time)) { summarySuccesses = Sum 1 }
+
+              mkFailure :: Tasty.Time -> String -> Summary
+              mkFailure time reason =
+                mkSummary $ Aeson.object $
+                        testCaseAttributes time <>
+                        ["failure" .= reason ]
+
+          summary <- case testResult of
               -- If the test is done, generate XML for it
-              Tasty.Done result
+              result
                 | Tasty.resultSuccessful result -> pure (mkSuccess (Tasty.resultTime result))
                 | otherwise ->
                     case resultException result of
                       Just e  -> pure $ (mkFailure (Tasty.resultTime result) (show e)) { summaryErrors = Sum 1 }
-                      Nothing -> pure $
+                      Nothing ->
                         if resultTimedOut result
-                          then (mkFailure (Tasty.resultTime result) "Timeout") { summaryErrors = Sum 1 }
-                          else (mkFailure (Tasty.resultTime result) (Tasty.resultDescription result))
+                          then pure $ (mkFailure (Tasty.resultTime result) "Timeout") { summaryErrors = Sum 1 }
+                          else do
+                            desc <- liftIO $ Tasty.formatMessage (Tasty.resultDescription result)
+                            pure (mkFailure (Tasty.resultTime result) desc)
                                { summaryFailures = Sum 1 }
-
-              -- Otherwise the test has either not been started or is currently
-              -- executing
-              _ -> STM.retry
 
           Const summary <$ State.modify (+ 1)
 
