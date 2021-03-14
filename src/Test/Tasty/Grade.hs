@@ -6,7 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-module Test.Tasty.Grade where
+module Test.Tasty.Grade (testGroupPoints, jsonRunner) where
 
 import Control.Applicative
 import Control.Monad.IO.Class (liftIO)
@@ -39,14 +39,26 @@ data TestGroupProps = TestGroupProps
   }
   deriving (Show, Eq, Ord)
 
-
 instance Tasty.IsOption (Maybe TestGroupProps) where
   defaultValue = Nothing
   parseValue _ = Nothing
   optionName = Tagged "testgrouppoints"
   optionHelp = Tagged ""
 
-testGroupPoints :: Int -> Int -> Int -> Tasty.TestTree -> Tasty.TestTree
+-- | Combinator for adding points to a single test or a whole test-group.
+--
+-- Note: This currently handles only a single group of test cases,
+-- e.g. no nested 'TestTree' are supported.
+testGroupPoints ::
+  -- | Points you receive for a successful test-case.
+  Int ->
+  -- | Points you lose when a test-case fails.
+  Int ->
+  -- | Maximum number of points you can receive for the given test-tree.
+  Int ->
+  -- | TestTree you want to apply the grading scheme to.
+  Tasty.TestTree ->
+  Tasty.TestTree
 testGroupPoints plus minus upperBound tree = Tasty.PlusTestOptions (Just points `Tasty.setOption`) tree
   where
     points = TestGroupProps plus minus upperBound
@@ -70,29 +82,20 @@ data Summary = Summary { summaryFailures :: Sum Int
                        , jsonRenderer :: Endo [Aeson.Value]
                        } deriving (Generic)
 
-data TestReport
-  = SingleTest
-  | TestGroup
-
 instance Monoid Summary where
   mempty = memptydefault
-#if !MIN_VERSION_base(4,11,0)
-  mappend = mappenddefault
-#else
+
 instance Semigroup Summary where
   (<>) = mappenddefault
-#endif
 
 -- ----------------------------------------------------------------------------
 
-{-|
-
-  To run tests using this ingredient, use 'Tasty.defaultMainWithIngredients',
-  passing 'antXMLRunner' as one possible ingredient. This ingredient will run
-  tests if you pass the @--xml@ command line option. For example,
-  @--xml=junit.xml@ will run all the tests and generate @junit.xml@ as output.
-
--}
+-- | To run tests using this ingredient, use 'Tasty.defaultMainWithIngredients',
+-- passing 'jsonRunner' as one possible ingredient.
+--
+-- This ingredient will run
+-- tests if you pass the @--grading-json@ command line option. For example,
+-- @--grading-json=report.json@ will run all the tests and generate @report.json@ as output.
 jsonRunner :: Tasty.Ingredient
 jsonRunner = Tasty.TestReporter optionDescription runner
  where
@@ -103,7 +106,7 @@ jsonRunner = Tasty.TestReporter optionDescription runner
     return $ \statusMap ->
       let
         timeToNs :: Tasty.Time -> Integer
-        timeToNs time = round $ time * 10 ** 9
+        timeToNs time = round $ time * 1e9
 
         runTest :: (Tasty.IsTest t)
                 => Tasty.OptionSet
