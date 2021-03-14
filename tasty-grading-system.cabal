@@ -7,9 +7,9 @@ category:           testing,mit,library
 license:            BSD-3-Clause
 license-file:       LICENSE.md
 homepage:           https://github.com/fendor/tasty-grading-system
-synopsis:           Score points on your tasty-testsuite
+synopsis:           Grade your tasty-testsuite.
 description:
-  Score points on your tasty-testsuite, intended for usage in grading assignments.
+  Grade your tasty-testsuite. Generate reports for programming assignments.
 
 extra-source-files:
   CHANGELOG.md
