@@ -3,7 +3,7 @@ name:               tasty-grading-system
 version:            0.1.0.0
 author:             Fendor
 maintainer:         power.walross@gmail.com
-category:           testing,mit,library
+category:           testing,bsd3,library
 license:            BSD-3-Clause
 license-file:       LICENSE.md
 homepage:           https://github.com/fendor/tasty-grading-system
