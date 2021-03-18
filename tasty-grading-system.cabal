@@ -49,4 +49,4 @@ test-suite tasty-grading-system-test
 
 source-repository head
   type:     git
-  location: git://github.com/mpickering/hie-bios.git
+  location: git://github.com/fendor/tasty-grading-system.git
