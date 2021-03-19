@@ -1,6 +1,0 @@
-cradle:
-  cabal:
-    - path: ./src
-      component: lib:tasty-grading-system
-    - path: ./test
-      component: test:tasty-grading-system-test
