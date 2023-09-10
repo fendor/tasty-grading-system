@@ -14,14 +14,14 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        ghc: ['8.10.4','8.8.4', '8.6.5']
+        ghc: ['9.6.2', '9.4.7', '8.10.7']
 
     steps:
     - uses: actions/checkout@v2
     - uses: haskell/actions/setup@v1
       with:
         ghc-version: ${{ matrix.ghc }}
-        cabal-version: '3.2'
+        cabal-version: '3.10.1.0'
 
     - name: Cache
       uses: actions/cache@v1
