@@ -194,7 +194,7 @@ jsonRunner = Tasty.TestReporter optionDescription runner
         (Const summary, tests) <-
           flip State.runStateT 0 $ Functor.getCompose $ Tasty.getTraversal $
            Tasty.foldTestTree
-             Tasty.trivialFold { Tasty.foldSingle = runTest, Tasty.foldGroup = runGroup }
+             Tasty.trivialFold { Tasty.foldSingle = runTest, Tasty.foldGroup = \opts name tests -> runGroup opts name $ mconcat tests}
              options
              testTree
 
@@ -202,8 +202,8 @@ jsonRunner = Tasty.TestReporter optionDescription runner
           createPathDirIfMissing path
           Aeson.encodeFile path $
             Aeson.object
-                [ "errors".= (getSum . summaryErrors $ summary)
-                , "failures" .= (getSum . summaryFailures $ summary)
+                [ "errors".= getSum (summaryErrors summary)
+                , "failures" .= getSum (summaryFailures summary)
                 , "tests" .= tests
                 , "time" .= timeToNs elapsedTime
                 , "results" .= appEndo (jsonRenderer summary) []
